@@ -470,3 +470,38 @@ For easier debugging, you can override the default log level for the package in 
   }
 }
 ```
+## Load-balanced setups
+TL;DR When using the package in a load-balanced site, you need to be careful of disabling it for the public instances.
+
+As explained in the [Rendering section](developers-guide-v4.md#rendering), Full Text Search uses Umbraco's `RenderTemplate` method to render the content, and be able to index it.
+
+The problem with load-balanced scenarios, is that the `RenderTemplate` method needs an `HttpContext` to run. When we publish a page, we will use the Master site. Full Text Search will be able to use an available `HttpContext` because when we save we are actually in a http request so there is an `HttpContext`; but once the content have been saved, these changes will also trigger a content update in the Public instance. In this case, this update happens internally, triggered by Umbraco in the background, without a real http request. 
+
+And without an http request we won't have an `HttpContext` and we will get an internal error similar to this:
+```
+FullTextSearch: Error updating nodeId: 11409 in culture:  using templateId: 3589: <!-- Error rendering template with id 11409: 'System.InvalidOperationException: HttpContext is null
+	at Umbraco.Extensions.HttpContextAccessorExtensions.GetRequiredHttpContext(IHttpContextAccessor httpContextAccessor)
+   	at Umbraco.Cms.Web.Common.Templates.TemplateRenderer.ExecuteTemplateRendering(TextWriter sw, IPublishedRequest request)
+   	at Umbraco.Cms.Web.Common.Templates.TemplateRenderer.RenderAsync(Int32 pageId, Nullable`1 altTemplateId, StringWriter writer)
+   	at Umbraco.Cms.Core.Templates.UmbracoComponentRenderer.RenderTemplateAsync(Int32 contentId, Nullable`1 altTemplateId)' -->
+```
+
+This error can actually make that the indexing is incorrect and will overwrite the right indexing done by your Master instance.
+
+For this reason, you need to disable Full Text Search only in the Public instances.
+
+To do this, you need wrap the Full Text Search initilization in some type of conditional that discriminates between your Public and your Master. Something like this:
+
+```
+if(isMaster)
+{
+    umbracoBuilder.AddFullTextSearch(options =>
+          {
+              options.DisallowedPropertyAliases = new List<string> { "umbracoNaviHide" };
+              options.XPathsToRemove = new List<string> { "//script", "//style", "//iframe"" };
+          });
+ 
+    builder.Services.AddUnique<IPageRenderer, RazorPageRenderer>();
+}
+```
+You have more information on how to discriminate them in the official [Umbraco documentation](https://docs.umbraco.com/umbraco-cms/fundamentals/setup/server-setup/load-balancing).
